@@ -1,0 +1,228 @@
+import sqlite3
+from tkinter import *
+import tkinter.ttk as ttk
+import tkinter.messagebox as mb
+import tkinter.simpledialog as sd
+
+connector = sqlite3.connect('appointments.db')
+cursor = connector.cursor()
+
+connector.execute('''
+    CREATE TABLE IF NOT EXISTS Appointments (
+        STUDENT_NAME TEXT,
+        STUDENT_ID TEXT PRIMARY KEY NOT NULL,
+        TEACHER_NAME TEXT,
+        APPOINTMENT_STATUS TEXT,
+        CARD_ID TEXT
+    )
+''')
+
+def issuer_card():
+    Cid = sd.askstring('Issuer Card ID', 'What is the Issuer\'s Card ID?\t\t\t')
+    if not Cid:
+        mb.showerror('Issuer ID cannot be zero!', 'Can\'t keep Issuer ID empty, it must have a value')
+    else:
+        return Cid
+
+def display_records():
+    global connector, cursor
+    global tree
+    tree.delete(*tree.get_children())
+    curr = connector.execute('SELECT * FROM Appointments')
+    data = curr.fetchall()
+    for records in data:
+        tree.insert('', END, values=records)
+
+def clear_fields():
+    global appt_status, student_id, student_name, teacher_name, card_id
+    appt_status.set('Scheduled')
+    for i in ['student_id', 'student_name', 'teacher_name', 'card_id']:
+        exec(f"{i}.set('')")
+    student_id_entry.config(state='normal')
+    try:
+        tree.selection_remove(tree.selection()[0])
+    except:
+        pass
+
+def clear_and_display():
+    clear_fields()
+    display_records()
+
+def schedule_appointment():
+    global connector
+    global student_name, student_id, teacher_name, appt_status
+    if appt_status.get() == 'Issued':
+        card_id.set(issuer_card())
+    else:
+        card_id.set('N/A')
+    surety = mb.askyesno('Are you sure?', 'Are you sure this is the data you want to enter?\nPlease note that Student ID cannot be changed in the future')
+    if surety:
+        try:
+            connector.execute(
+                'INSERT INTO Appointments (STUDENT_NAME, STUDENT_ID, TEACHER_NAME, APPOINTMENT_STATUS, CARD_ID) VALUES (?, ?, ?, ?, ?)',
+                (student_name.get(), student_id.get(), teacher_name.get(), appt_status.get(), card_id.get()))
+            connector.commit()
+            clear_and_display()
+            mb.showinfo('Appointment Scheduled', 'The new appointment was successfully added to your database')
+        except sqlite3.IntegrityError:
+            mb.showerror('Student ID already in use!',
+                         'The Student ID you are trying to enter is already in the database, please alter that student\'s record or check any discrepancies on your side')
+
+def view_record():
+    global student_name, student_id, appt_status, teacher_name, card_id
+    global tree
+    if not tree.focus():
+        mb.showerror('Select a row!', 'To view a record, you must select it in the table. Please do so before continuing.')
+        return
+    current_item_selected = tree.focus()
+    values_in_selected_item = tree.item(current_item_selected)
+    selection = values_in_selected_item['values']
+    student_name.set(selection[0])
+    student_id.set(selection[1])
+    appt_status.set(selection[3])
+    teacher_name.set(selection[2])
+    try:
+        card_id.set(selection[4])
+    except:
+        card_id.set('')
+
+def update_record():
+    def update():
+        global appt_status, student_name, student_id, teacher_name, card_id
+        global connector, tree
+        if appt_status.get() == 'Issued':
+            card_id.set(issuer_card())
+        else:
+            card_id.set('N/A')
+        cursor.execute('UPDATE Appointments SET STUDENT_NAME=?, APPOINTMENT_STATUS=?, TEACHER_NAME=?, CARD_ID=? WHERE STUDENT_ID=?',
+                       (student_name.get(), appt_status.get(), teacher_name.get(), card_id.get(), student_id.get()))
+        connector.commit()
+        clear_and_display()
+        edit.destroy()
+        student_id_entry.config(state='normal')
+        clear.config(state='normal')
+    
+    view_record()
+    student_id_entry.config(state='disable')
+    clear.config(state='disable')
+    edit = Button(left_frame, text='Update Record', font=btn_font, bg=btn_hlb_bg, width=20, command=update)
+    edit.place(x=50, y=375)
+
+def cancel_appointment():
+    if not tree.selection():
+        mb.showerror('Error!', 'Please select an item from the database')
+        return
+    current_item = tree.focus()
+    values = tree.item(current_item)
+    selection = values["values"]
+    cursor.execute('DELETE FROM Appointments WHERE STUDENT_ID=?', (selection[1], ))
+    connector.commit()
+    tree.delete(current_item)
+    mb.showinfo('Done', 'The appointment you wanted cancelled was successfully removed from the database.')
+    clear_and_display()
+
+def delete_appointment_schedule():
+    if mb.askyesno('Are you sure?', 'Are you sure you want to delete the entire appointment schedule?\n\nThis command cannot be reversed'):
+        tree.delete(*tree.get_children())
+        cursor.execute('DELETE FROM Appointments')
+        connector.commit()
+
+def change_appointment_status():
+    global card_id, tree, connector
+    if not tree.selection():
+        mb.showerror('Error!', 'Please select an appointment from the database')
+        return
+    current_item = tree.focus()
+    values = tree.item(current_item)
+    student_id = values['values'][1]
+    appt_status = values["values"][3]
+    if appt_status == 'Issued':
+        surety = mb.askyesno('Is the appointment cancelled?', 'Has the appointment been cancelled?')
+        if surety:
+            cursor.execute('UPDATE Appointments SET APPOINTMENT_STATUS=?, CARD_ID=? WHERE STUDENT_ID=?', ('Scheduled', 'N/A', student_id))
+            connector.commit()
+        else:
+            mb.showinfo('Cannot be changed', 'The appointment status cannot be set to Scheduled unless it has been scheduled')
+    else:
+        cursor.execute('UPDATE Appointments SET APPOINTMENT_STATUS=?, CARD_ID=? where STUDENT_ID=?', ('Issued', issuer_card(), student_id))
+        connector.commit()
+    clear_and_display()
+
+lf_bg = 'LightSkyBlue'
+rtf_bg = 'DeepSkyBlue'
+rbf_bg = 'DodgerBlue' 
+btn_hlb_bg = 'SteelBlue'
+lbl_font = ('Georgia', 13)
+entry_font = ('Times New Roman', 12)
+btn_font = ('Gill Sans MT', 13)
+
+root = Tk()
+root.title('Student-Teacher Appointment System')
+root.geometry('1010x530')
+root.resizable(0, 0)
+
+Label(root, text='Student-Teacher Appointment System', font=("Noto Sans CJK TC", 15, 'bold'), bg=btn_hlb_bg, fg='White').pack(side=TOP, fill=X)
+
+appt_status = StringVar()
+student_name = StringVar()
+student_id = StringVar()
+teacher_name = StringVar()
+card_id = StringVar()
+
+left_frame = Frame(root, bg=lf_bg)
+left_frame.place(x=0, y=30, relwidth=0.3, relheight=0.96)
+
+RT_frame = Frame(root, bg=rtf_bg)
+RT_frame.place(relx=0.3, y=30, relheight=0.2, relwidth=0.7)
+
+RB_frame = Frame(root)
+RB_frame.place(relx=0.3, rely=0.24, relheight=0.785, relwidth=0.7)
+
+Label(left_frame, text='Student Name', bg=lf_bg, font=lbl_font).place(x=98, y=25)
+Entry(left_frame, width=25, font=entry_font, text=student_name).place(x=45, y=55)
+
+Label(left_frame, text='Student ID', bg=lf_bg, font=lbl_font).place(x=110, y=105)
+student_id_entry = Entry(left_frame, width=25, font=entry_font, text=student_id)
+student_id_entry.place(x=45, y=135)
+
+Label(left_frame, text='Teacher Name', bg=lf_bg, font=lbl_font).place(x=90, y=185)
+Entry(left_frame, width=25, font=entry_font, text=teacher_name).place(x=45, y=215)
+
+Label(left_frame, text='Appointment Status', bg=lf_bg, font=lbl_font).place(x=75, y=265)
+dd = OptionMenu(left_frame, appt_status, *['Scheduled', 'Issued'])
+dd.configure(font=entry_font, width=12)
+dd.place(x=75, y=300)
+
+submit = Button(left_frame, text='Schedule appointment', font=btn_font, bg=btn_hlb_bg, width=20, command=schedule_appointment)
+submit.place(x=50, y=375)
+
+clear = Button(left_frame, text='Clear fields', font=btn_font, bg=btn_hlb_bg, width=20, command=clear_fields)
+clear.place(x=50, y=435)
+
+Button(RT_frame, text='Cancel appointment', font=btn_font, bg=btn_hlb_bg, width=17, command=cancel_appointment).place(x=8, y=30)
+Button(RT_frame, text='Delete appointment schedule', font=btn_font, bg=btn_hlb_bg, width=30, command=delete_appointment_schedule).place(x=178, y=30)
+Button(RT_frame, text='Update details', font=btn_font, bg=btn_hlb_bg, width=17, command=update_record).place(x=518, y=30)
+Button(RT_frame, text='Change Appointment Status', font=btn_font, bg=btn_hlb_bg, width=24, command=change_appointment_status).place(x=348, y=30)
+
+Label(RB_frame, text='APPOINTMENT SCHEDULE', bg=rbf_bg, font=("Noto Sans CJK TC", 15, 'bold')).pack(side=TOP, fill=X)
+tree = ttk.Treeview(RB_frame, selectmode=BROWSE, columns=('Student Name', 'Student ID', 'Teacher Name', 'Appointment Status', 'Card ID'))
+XScrollbar = Scrollbar(tree, orient=HORIZONTAL, command=tree.xview)
+YScrollbar = Scrollbar(tree, orient=VERTICAL, command=tree.yview)
+XScrollbar.pack(side=BOTTOM, fill=X)
+YScrollbar.pack(side=RIGHT, fill=Y)
+tree.config(xscrollcommand=XScrollbar.set, yscrollcommand=YScrollbar.set)
+tree.heading('Student Name', text='Student Name', anchor=CENTER)
+tree.heading('Student ID', text='Student ID', anchor=CENTER)
+tree.heading('Teacher Name', text='Teacher Name', anchor=CENTER)
+tree.heading('Appointment Status', text='Status of the Appointment', anchor=CENTER)
+tree.heading('Card ID', text='Card ID of the Issuer', anchor=CENTER)
+tree.column('#0', width=0, stretch=NO)
+tree.column('#1', width=200, stretch=NO)
+tree.column('#2', width=100, stretch=NO)
+tree.column('#3', width=150, stretch=NO)
+tree.column('#4', width=150, stretch=NO)
+tree.column('#5', width=150, stretch=NO)
+tree.place(y=30, x=0, relheight=0.9, relwidth=1)
+clear_and_display()
+
+root.mainloop()
